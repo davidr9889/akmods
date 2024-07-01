@@ -17,7 +17,7 @@ concurrency:
 jobs:
   build_ublue:
     name: akmods
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-24.04 # Work Around Tar Bug
     permissions:
       contents: read
       packages: write
@@ -33,11 +33,16 @@ jobs:
           - fsync
           - fsync-lts
           - surface
+          - coreos
         cfile_suffix:
           - common
           - extra
           - nvidia
         exclude:
+          - fedora_version: 39
+            kernel_flavor: fsync
+          - fedora_version: 39
+            kernel_flavor: asus
           - fedora_version: 40
             kernel_flavor: fsync-lts # kernel-ba packages are not being built for F40 yet.
     steps:
@@ -58,7 +63,6 @@ jobs:
           echo "SOURCE_IMAGE=${SOURCE_IMAGE}" >> $GITHUB_ENV
           echo "SOURCE_ORG=${SOURCE_ORG}" >> $GITHUB_ENV
           echo "FQ_SOURCE_IMAGE=quay.io/${SOURCE_ORG}/${SOURCE_IMAGE}:${{ matrix.fedora_version }}" >> $GITHUB_ENV
-
 
       - name: Generate tags
         id: generate-tags
@@ -160,6 +164,16 @@ jobs:
                 $dnf config-manager --add-repo=https://pkg.surfacelinux.com/fedora/linux-surface.repo
                 linux=$($dnf repoquery --repoid linux-surface --whatprovides kernel-surface | tail -n1 | sed 's/.*://')
                 ;;
+              "coreos")
+                coreos_kernel_release=$(skopeo inspect docker://quay.io/fedora/fedora-coreos:stable | jq -r '.Labels["ostree.linux"] | split(".x86_64")[0]')
+                coreos_fedora_version=$(echo $coreos_kernel_release | grep -oP 'fc\K[0-9]+')
+                if [[ "${{ matrix.fedora_version }}" == "$coreos_fedora_version" ]]; then
+                    linux="${coreos_kernel_release}"
+                elif [[ "$(( "${coreos_fedora_version}" - 1 ))" == ${{ matrix.fedora_version }} ]]; then
+                    major_minor_patch=$(echo "$coreos_kernel_release" | cut -d '-' -f 1)
+                    linux="${major_minor_patch}-200.fc$(($coreos_fedora_version - 1))"
+                fi
+                ;;
               *)
                 echo "unexpected kernel_flavor '${{ matrix.kernel_flavor }}' for dnf repoquery"
                 ;;
@@ -215,7 +229,6 @@ jobs:
         uses: ASzc/change-string-case-action@v6
         with:
           string: ${{ env.IMAGE_REGISTRY }}
-
 
       - name: Push To GHCR
         uses: Wandalen/wretry.action@v3.5.0
